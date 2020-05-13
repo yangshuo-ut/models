@@ -192,6 +192,7 @@ def _get_params_from_flags(flags_obj: flags.FlagValues):
 
 def resume_from_checkpoint(model: tf.keras.Model,
                            model_dir: str,
+                           flags,
                            train_steps: int) -> int:
   """Resumes from the latest checkpoint, if possible.
 
@@ -210,14 +211,22 @@ def resume_from_checkpoint(model: tf.keras.Model,
   logging.info('Load from checkpoint is enabled.')
   latest_checkpoint = tf.train.latest_checkpoint(model_dir)
   logging.info('latest_checkpoint: %s', latest_checkpoint)
-  if not latest_checkpoint:
+  if latest_checkpoint:
+    logging.info('Checkpoint file %s found and restoring from '
+               'checkpoint', latest_checkpoint)
+    model.load_weights(latest_checkpoint)
+  elif flags.init_chkpt:
+    logging.info('Load init checkpoint from: %s', flags.init_chkpt)
+    model.load_weights(flags.init_chkpt)
+    model.optimizer.iterations.assign(int(model.optimizer.iterations * flags.SWITCH_FROM / flags.SWITCH_TO))
+  else:
     logging.info('No checkpoint detected.')
     return 0
-
-  logging.info('Checkpoint file %s found and restoring from '
-               'checkpoint', latest_checkpoint)
-  model.load_weights(latest_checkpoint)
+  
   initial_epoch = model.optimizer.iterations // train_steps
+  # Check the epoch count
+  if flags.init_chkpt:
+    assert initial_epoch == int(flags.init_chkpt[-4:])
   logging.info('Completed loading from checkpoint.')
   logging.info('Resuming from epoch %d', initial_epoch)
   return int(initial_epoch)
@@ -255,6 +264,18 @@ def initialize(params: base_configs.ExperimentConfig,
 def define_classifier_flags():
   """Defines common flags for image classification."""
   hyperparams_flags.initialize_common_flags()
+  flags.DEFINE_integer(
+      'SWITCH_FROM',
+      default=-1,
+      help='The batch size of the checkpoint model.')
+  flags.DEFINE_integer(
+      'SWITCH_TO',
+      default=-1,
+      help='The batch size of the current model.')
+  flags.DEFINE_string(
+      'init_chkpt',
+      default=None,
+      help='The location of the inital checkpoint.')
   flags.DEFINE_string(
       'data_dir',
       default=None,
@@ -292,7 +313,8 @@ def serialize_config(params: base_configs.ExperimentConfig,
 
 def train_and_eval(
     params: base_configs.ExperimentConfig,
-    strategy_override: tf.distribute.Strategy) -> Mapping[str, Any]:
+    strategy_override: tf.distribute.Strategy,
+    flags_obj) -> Mapping[str, Any]:
   """Runs the train and eval path using compile/fit."""
   logging.info('Running train and eval.')
 
@@ -327,6 +349,7 @@ def train_and_eval(
 
   logging.info('Global batch size: %d', train_builder.global_batch_size)
 
+
   with strategy_scope:
     model_params = params.model.model_params.as_dict()
     model = get_models()[params.model.name](**model_params)
@@ -356,7 +379,11 @@ def train_and_eval(
     if params.train.resume_checkpoint:
       initial_epoch = resume_from_checkpoint(model=model,
                                              model_dir=params.model_dir,
+                                             flags=flags_obj,
                                              train_steps=train_steps)
+
+    # print(train_steps, train_builder.global_batch_size, initial_epoch, model.optimizer.iterations)
+    # assert False
 
     callbacks = custom_callbacks.get_callbacks(
         model_checkpoint=params.train.callbacks.enable_checkpoint_and_export,
@@ -429,7 +456,7 @@ def run(flags_obj: flags.FlagValues,
   """
   params = _get_params_from_flags(flags_obj)
   if params.mode == 'train_and_eval':
-    return train_and_eval(params, strategy_override)
+    return train_and_eval(params, strategy_override, flags_obj)
   elif params.mode == 'export_only':
     export(params)
   else:
