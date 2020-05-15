@@ -36,6 +36,7 @@ def get_callbacks(model_checkpoint: bool = True,
                   apply_moving_average: bool = False,
                   initial_step: int = 0,
                   batch_size: int = 0,
+                  train_steps: int = 0,
                   log_steps: int = 0,
                   model_dir: str = None) -> List[tf.keras.callbacks.Callback]:
   """Get all callbacks."""
@@ -51,7 +52,8 @@ def get_callbacks(model_checkpoint: bool = True,
             log_dir=model_dir,
             track_lr=track_lr,
             initial_step=initial_step,
-            write_images=write_model_weights))
+            write_images=write_model_weights,
+            train_steps=train_steps))
   if time_history:
     callbacks.append(
         keras_utils.TimeHistory(
@@ -103,10 +105,12 @@ class CustomTensorBoard(tf.keras.callbacks.TensorBoard):
                log_dir: str,
                track_lr: bool = False,
                initial_step: int = 0,
+               train_steps: int = 0,
                **kwargs):
     super(CustomTensorBoard, self).__init__(log_dir=log_dir, **kwargs)
     self.step = initial_step
     self._track_lr = track_lr
+    self.train_steps = train_steps
 
   def on_batch_begin(self,
                      epoch: int,
@@ -135,6 +139,8 @@ class CustomTensorBoard(tf.keras.callbacks.TensorBoard):
       logs = {}
     metrics = self._calculate_metrics()
     logs.update(metrics)
+    # if self.train_steps:
+    logs['learning_rate'] = self.model.optimizer.lr(epoch * self.train_steps)()
     super(CustomTensorBoard, self).on_epoch_end(epoch, logs)
 
   def _calculate_metrics(self) -> MutableMapping[str, Any]:

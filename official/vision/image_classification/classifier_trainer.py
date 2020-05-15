@@ -192,6 +192,7 @@ def _get_params_from_flags(flags_obj: flags.FlagValues):
 
 def resume_from_checkpoint(model: tf.keras.Model,
                            model_dir: str,
+                           params,
                            flags,
                            train_steps: int) -> int:
   """Resumes from the latest checkpoint, if possible.
@@ -218,15 +219,23 @@ def resume_from_checkpoint(model: tf.keras.Model,
   elif flags.init_chkpt:
     logging.info('Load init checkpoint from: %s', flags.init_chkpt)
     model.load_weights(flags.init_chkpt)
-    model.optimizer.iterations.assign(int(model.optimizer.iterations * flags.SWITCH_FROM / flags.SWITCH_TO))
+    # model.optimizer.iterations.assign(int(model.optimizer.iterations * flags.SWITCH_FROM / flags.SWITCH_TO))
+    model.optimizer.iterations.assign(int(train_steps * int(flags.init_chkpt[-4:])))
   else:
     logging.info('No checkpoint detected.')
     return 0
+
+  if flags.freeze_lr:
+    learning_rate = optimizer_factory.build_learning_rate(
+        params=params.model.learning_rate,
+        batch_size=int(flags.SWITCH_FROM),
+        train_steps=train_steps)
+    model.optimizer.lr=learning_rate
   
   initial_epoch = model.optimizer.iterations // train_steps
   # Check the epoch count
-  if flags.init_chkpt:
-    assert initial_epoch == int(flags.init_chkpt[-4:])
+  if not latest_checkpoint and flags.init_chkpt:
+    assert initial_epoch == int(flags.init_chkpt[-4:]), (model.optimizer.iterations, train_steps, initial_epoch, flags.init_chkpt[-4:])
   logging.info('Completed loading from checkpoint.')
   logging.info('Resuming from epoch %d', initial_epoch)
   return int(initial_epoch)
@@ -264,6 +273,10 @@ def initialize(params: base_configs.ExperimentConfig,
 def define_classifier_flags():
   """Defines common flags for image classification."""
   hyperparams_flags.initialize_common_flags()
+  flags.DEFINE_bool(
+      'freeze_lr',
+      default=False,
+      help='True if using same lr scheduler after switch')
   flags.DEFINE_integer(
       'SWITCH_FROM',
       default=-1,
@@ -379,10 +392,11 @@ def train_and_eval(
     if params.train.resume_checkpoint:
       initial_epoch = resume_from_checkpoint(model=model,
                                              model_dir=params.model_dir,
+                                             params=params,
                                              flags=flags_obj,
                                              train_steps=train_steps)
 
-    # print(train_steps, train_builder.global_batch_size, initial_epoch, model.optimizer.iterations)
+    # print(model.optimizer.lr._lr_values)
     # assert False
 
     callbacks = custom_callbacks.get_callbacks(
@@ -393,6 +407,7 @@ def train_and_eval(
         write_model_weights=params.train.tensorboard.write_model_weights,
         initial_step=initial_epoch * train_steps,
         batch_size=train_builder.global_batch_size,
+        train_steps=train_steps,
         log_steps=params.train.time_history.log_steps,
         model_dir=params.model_dir)
 

@@ -1,14 +1,15 @@
 # export TPU_NAME=lbt-tpu-europe
-export DEVICE_COUNT=128
-export TPU_NAME=v3-$DEVICE_COUNT
+export DEVICE_ID=0
+export DEVICE_COUNT=8
+export TPU_NAME=v3-$DEVICE_COUNT-$DEVICE_ID
 
 export STORAGE_BUCKET=gs://lbt-bucket-europe-west4
-export MODEL_DIR=$STORAGE_BUCKET/large_imagenet
+export MODEL_DIR=$STORAGE_BUCKET/chkpt_test
 export DATA_DIR=$STORAGE_BUCKET/image_net
 
-export SWITCH_FROM=4096
+export SWITCH_FROM=1024
 export SWITCH_TO=1024
-export SWITCH_AT=50
+export SWITCH_AT=08
 
 per_replica_batch_size=`expr $SWITCH_TO / $DEVICE_COUNT`
 
@@ -25,7 +26,8 @@ then
   --params_override="train_dataset.builder=records,validation_dataset.builder=records,train_dataset.batch_size=$per_replica_batch_size"\
   --init_chkpt=$MODEL_DIR/$SWITCH_FROM/model.ckpt-00$SWITCH_AT \
   --SWITCH_FROM=$SWITCH_FROM \
-  --SWITCH_TO=$SWITCH_TO
+  --SWITCH_TO=$SWITCH_TO \
+  --freeze_lr=False
 else
   python3 classifier_trainer.py   \
   --mode=train_and_eval   \
